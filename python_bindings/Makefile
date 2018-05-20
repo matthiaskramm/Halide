@@ -98,6 +98,31 @@ $(BIN)/%.so: $(BIN)/%_PyStub.o $(BIN)/PyStubImpl.o $(BIN)/%_generator.o $(LIBHAL
 	@mkdir -p $(@D)
 	$(CXX) $^ $(LDFLAGS) -shared -o $@
 
+## Compile the generators:
+$(BIN)/%.gen: ../tools/GenGen.cpp correctness/%_generator.cpp $(LIBHALIDE)
+	@mkdir -p $(@D)
+	$(CXX) $(CCFLAGS) $(LDFLAGS) $^ -fno-rtti -o $@
+
+# Make the generator generate a Python extension:
+$(BIN)/%.py.c $(BIN)/%.cpp $(BIN)/%.h: $(BIN)/%.gen
+	LD_LIBRARY_PATH=$(HALIDE_DISTRIB_PATH)/bin $< -e h,cpp,py.c \
+	    -g $(notdir $(basename $<)) -o $(BIN) target=host
+
+# Compile the Python extension(s):
+$(BIN)/%.o: $(BIN)/%.cpp
+	$(CXX) -c $(FPIC) $(CCFLAGS) $^ -o $@
+$(BIN)/%.py.o: $(BIN)/%.py.c
+	# Python's PyModInit_Func doesn't yet do __attribute__((visibility ("...")))
+	$(CXX) -c $(FPIC) $(filter-out -fvisibility=hidden,$(CCFLAGS)) $^ -o $@
+$(BIN)/ext/%.so: $(BIN)/%.py.o $(BIN)/%.o ../bin/host/runtime.a $(LIBHALIDE)
+	@mkdir -p $(BIN)/ext
+	$(CXX) $(LDFLAGS) $^ -shared -o $@
+
+# Run the Python extension(s):
+%.run: $(ROOT_DIR)/correctness/%_test.py $(BIN)/ext/%.so
+	PYTHONPATH="$(BIN)/ext:$$PYTHONPATH" $(PYTHON) $<
+
+test_correctness_datatypes: datatypes.run
 test_correctness_pystub: $(BIN)/simplestub.so $(BIN)/complexstub.so $(BIN)/buildmethod.so $(BIN)/partialbuildmethod.so $(BIN)/nobuildmethod.so
 
 APPS = $(shell ls $(ROOT_DIR)/apps/*.py)
